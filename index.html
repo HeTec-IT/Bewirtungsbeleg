@@ -230,28 +230,92 @@ window.addEventListener('resize',sizeSignature);
 $('resetBtn').addEventListener('click',()=>{if(!confirm('Alle Angaben einschließlich Unterschrift löschen?'))return;ids.forEach(id=>$(id).value='');strokes=[];renderSignature();calculate();$('preview').classList.remove('show');setError('');try{localStorage.removeItem(KEY)}catch(e){};resetReceipt();window.scrollTo({top:0,behavior:'smooth'});});
 
 const W=552,H=752,FACTOR=3;
-function paragraphs(ctx,text,x,y,maxWidth,maxHeight,size=11,lineHeight=1.32){
- let fontSize=size,wrapped=[];
- function layout(fs){ctx.font=`${fs}px Arial, sans-serif`;const result=[];for(let para of String(text).split(/\r?\n/)){if(!para.trim()){result.push('');continue;}let line='';for(const word of para.trim().split(/\s+/)){const t=line?line+' '+word:word;if(ctx.measureText(t).width>maxWidth&&line){result.push(line);line=word;}else{line=t;}}result.push(line);}return result;}
- wrapped=layout(fontSize);while(wrapped.length*fontSize*lineHeight>maxHeight&&fontSize>8.0){fontSize-=.3;wrapped=layout(fontSize);}if(wrapped.length*fontSize*lineHeight>maxHeight)throw Error('Zu viel Text im Formular. Bitte Anlass oder Teilnehmer etwas kürzen.');
- ctx.fillStyle='#101010';ctx.textBaseline='top';ctx.font=`${fontSize}px Arial, sans-serif`;wrapped.forEach((l,i)=>{ctx.fillText(l,x,y+i*fontSize*lineHeight,maxWidth);});
+let overflowEntries=[];
+function paragraphs(ctx,text,x,y,maxWidth,maxHeight,size=11,lineHeight=1.32,label='Angaben'){
+ const raw=String(text||'');if(!raw.trim())return;
+ let fs=size,lines=[];
+ function layout(sz){
+   ctx.font=sz+'px Arial, sans-serif';const out=[];
+   for(const para of raw.split(/\r?\n/)){
+     if(!para.trim()){out.push('');continue;}
+     let line='';
+     for(const word of para.trim().split(/\s+/)){
+       const val=line?line+' '+word:word;
+       if(line&&ctx.measureText(val).width>maxWidth){out.push(line);line=word;}
+       else line=val;
+     }
+     out.push(line);
+   }
+   return out;
+ }
+ lines=layout(fs);
+ const height=()=>lines.length?((lines.length-1)*fs*lineHeight+fs*1.03):0;
+ while(height()>maxHeight&&fs>7.6){fs=Math.max(7.6,Math.round((fs-.2)*100)/100);lines=layout(fs);}
+ ctx.fillStyle='#101010';ctx.textBaseline='top';
+ if(height()>maxHeight){
+   ctx.font='10px Arial, sans-serif';
+   ctx.fillText('Siehe Zusatzblatt: '+label,x,y,maxWidth);
+   overflowEntries.push({label,text:raw});
+   return;
+ }
+ ctx.font=fs+'px Arial, sans-serif';
+ lines.forEach((line,i)=>ctx.fillText(line,x,y+i*fs*lineHeight,maxWidth));
 }
 function imageLoaded(){return image.decode?image.decode():new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=reject;});}
-async function makePage(){await imageLoaded();const c=document.createElement('canvas');c.width=W*FACTOR;c.height=H*FACTOR;const g=c.getContext('2d',{alpha:false});g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';g.scale(FACTOR,FACTOR);g.fillStyle='#fff';g.fillRect(0,0,W,H);g.drawImage(image,0,0,W,H);
- paragraphs(g,dateDE($('mealDate').value),10,146,269,27,12);
- paragraphs(g,$('location').value.trim(),305,143,236,39,11);
- paragraphs(g,$('reason').value.trim(),10,219,529,68,11.5);
+async function makePage(){overflowEntries=[];await imageLoaded();const c=document.createElement('canvas');c.width=W*FACTOR;c.height=H*FACTOR;const g=c.getContext('2d',{alpha:false});g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';g.scale(FACTOR,FACTOR);g.fillStyle='#fff';g.fillRect(0,0,W,H);g.drawImage(image,0,0,W,H);
+ paragraphs(g,dateDE($('mealDate').value),10,146,269,27,12,1.32,'Bewirtungsdatum');
+ paragraphs(g,$('location').value.trim(),305,143,236,39,11,1.32,'Ort der Bewirtung');
+ paragraphs(g,$('reason').value.trim(),10,219,529,68,11.5,1.32,'Anlass der Bewirtung');
  const host=$('host').value.trim();let persons=$('persons').value.trim().split(/\r?\n/).map(v=>v.trim()).filter(Boolean);persons=[host,...persons.filter(n=>n.toLocaleLowerCase('de')!==host.toLocaleLowerCase('de'))];
- paragraphs(g,persons.join('\n'),10,320,528,218,12);
- paragraphs(g,euro(money($('gross').value)),114,588,104,22,11);
- paragraphs(g,euro(money($('tip').value)),362,588,64,22,11);
+ paragraphs(g,persons.join('\n'),10,320,528,218,12,1.32,'Bewirtete Personen');
+ paragraphs(g,euro(money($('gross').value)),114,588,104,22,11,1.32,'Rechnungsbetrag');
+ paragraphs(g,euro(money($('tip').value)),362,588,64,22,11,1.32,'Trinkgeld');
  const sum=money($('gross').value)+money($('tip').value);g.font='bold 11.5px Arial';g.textBaseline='top';g.fillStyle='#111';g.fillText('Auszahlungsbetrag: '+euro(sum)+' EUR',10,632,360);
  let dateLine=($('fillPlace').value.trim()?$('fillPlace').value.trim()+', ':'')+filledDate;
- paragraphs(g,dateLine,10,700,281,36,11.5);
+ paragraphs(g,dateLine,10,700,281,36,11.5,1.32,'Ort und Ausfülldatum');
  // Transparent ink-only signature, sized to keep inside the original signature field
  const sc=document.createElement('canvas');sc.width=700;sc.height=160;const sg=sc.getContext('2d');sg.lineWidth=3.4;sg.lineCap='round';sg.lineJoin='round';sg.strokeStyle='#111';for(const line of strokes){if(!line.length)continue;sg.beginPath();line.forEach((p,i)=>{if(i===0)sg.moveTo(p[0]*sc.width,p[1]*sc.height);else sg.lineTo(p[0]*sc.width,p[1]*sc.height);});if(line.length===1){sg.lineTo(line[0][0]*sc.width+.3,line[0][1]*sc.height+.3);}sg.stroke();}
  g.drawImage(sc,306,693,228,42);
  return c;
+}
+function createAppendixPages(){
+ if(!overflowEntries.length)return [];
+ const out=[];let g,c,y;
+ const margin=35,maxWidth=W-2*margin,bottom=H-45;
+ function newPage(){
+  c=document.createElement('canvas');c.width=W*FACTOR;c.height=H*FACTOR;
+  g=c.getContext('2d',{alpha:false});g.scale(FACTOR,FACTOR);
+  g.fillStyle='#fff';g.fillRect(0,0,W,H);g.fillStyle='#171717';
+  g.font='bold 17px Arial, sans-serif';g.fillText('Ergänzung zum Bewirtungsbeleg',margin,45);
+  g.font='10px Arial, sans-serif';
+  g.fillText('Bewirtung: '+dateDE($('mealDate').value)+'  ·  Gastgeber: '+$('host').value.trim(),margin,65,maxWidth);
+  g.beginPath();g.moveTo(margin,78);g.lineTo(W-margin,78);g.strokeStyle='#777';g.stroke();y=100;out.push(c);
+ }
+ function wrappedLines(txt){
+  const lines=[];g.font='12px Arial, sans-serif';
+  for(const para of String(txt).split(/\r?\n/)){
+   if(!para.trim()){lines.push('');continue;}
+   let line='';
+   for(const word of para.trim().split(/\s+/)){
+    const candidate=line?line+' '+word:word;
+    if(line&&g.measureText(candidate).width>maxWidth){lines.push(line);line=word;}
+    else line=candidate;
+   }
+   lines.push(line);
+  }
+  return lines;
+ }
+ newPage();
+ for(const entry of overflowEntries){
+  if(y>bottom-65)newPage();
+  g.fillStyle='#111';g.font='bold 13px Arial, sans-serif';g.fillText(entry.label,margin,y,maxWidth);y+=24;
+  for(const line of wrappedLines(entry.text)){
+   if(y+17>bottom)newPage();
+   g.fillStyle='#111';g.font='12px Arial, sans-serif';g.fillText(line,margin,y,maxWidth);y+=17;
+  }
+  y+=22;
+ }
+ return out;
 }
 function bytes(str){return new TextEncoder().encode(str)}
 function toJpegBytes(dataURL){
@@ -298,7 +362,7 @@ $('form').addEventListener('submit',async e=>{e.preventDefault();setError('');
  if(!Number.isFinite(money($('tip').value))){setError('Bitte das Trinkgeld als gültigen Betrag eingeben oder das Feld leer lassen.');$('tip').focus();return;}
  if(!strokes.length){setError('Bitte noch mit dem Finger unterschreiben.');signature.scrollIntoView({behavior:'smooth',block:'center'});return;}
  const btn=$('createBtn');btn.disabled=true;btn.textContent='Beleg wird erstellt …';
- try{const canvas=await makePage();const jpeg=canvas.toDataURL('image/jpeg',.94);const pages=[{dataURL:jpeg,width:canvas.width,height:canvas.height}];if(receiptDataURL && $('attachReceipt').checked){pages.push({dataURL:receiptDataURL,width:receiptWidth,height:receiptHeight});}latestPDF=pdfFromPages(pages);$('previewImage').src=jpeg;$('preview').classList.add('show');$('preview').scrollIntoView({behavior:'smooth',block:'start'});persist();}
+ try{const canvas=await makePage();const jpeg=canvas.toDataURL('image/jpeg',.94);const pages=[{dataURL:jpeg,width:canvas.width,height:canvas.height}];for(const extra of createAppendixPages()){pages.push({dataURL:extra.toDataURL('image/jpeg',.94),width:extra.width,height:extra.height});}if(receiptDataURL && $('attachReceipt').checked){pages.push({dataURL:receiptDataURL,width:receiptWidth,height:receiptHeight});}latestPDF=pdfFromPages(pages);$('previewImage').src=jpeg;$('preview').classList.add('show');$('preview').scrollIntoView({behavior:'smooth',block:'start'});persist();}
  catch(err){setError('Der Beleg konnte nicht erstellt werden: '+err.message);}
  finally{btn.disabled=false;btn.textContent='Bewirtungsbeleg erstellen';}
 });
